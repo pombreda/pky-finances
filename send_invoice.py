@@ -232,7 +232,10 @@ def main(argv=None):
                     msg = compose_email(sender, recipient, subject, message,
                                         row)
                     print "Sending email to <%s>..." % recipient
-                    server.sendmail(sender, [recipient], msg.as_string())
+                    rsp = server.sendmail(sender, [recipient], msg.as_string(),
+                                          rcpt_options=['NOTIFY=FAILURE,DELAY'])
+                    if rsp:
+                        print "Mail delivery failed: %s" % rsp
             else:
                 print "Did not send!"
 
