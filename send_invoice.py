@@ -21,9 +21,15 @@
 
 import argparse
 import csv
+import os
+import smtplib
+import sys
 from datetime import datetime
+from email.mime.text import MIMEText
+
 
 DETAILS_TEMPLATE = u"""
+Selite: %(selite)s
 Saaja: Polyteknikkojen Kuoron kannatusyhdistys ry
 Pankkiyhteys: Nordea
 Tilinumero: FI14 1112 3000 3084 34
@@ -33,18 +39,33 @@ Eräpäivä: %(eräpäivä)s
 """
 
 FOOTER = u"""
-Terveisin,
+
+Parhain terveisin,
   Markus Lehtonen
   PKY
 """
 
-def compose_email(message, row_data):
+def compose_email(sender, recipient, subject, message, row_data):
     """Compose email text"""
-    return message + '\n' + DETAILS_TEMPLATE % row_data + FOOTER
+    msg = MIMEText(message + '\n' + DETAILS_TEMPLATE % row_data + FOOTER,
+                   _charset='utf-8')
+    msg['Subject'] = subject
+    msg['From'] = sender
+    msg['To'] = recipient
+    return msg
 
-def utf8_reader(input_stream):
+def pprint_email(msg):
+    """Pretty print email"""
+    print "From:", msg['From']
+    print "To:", msg['To']
+    print "Subject:", msg['Subject']
+    print ""
+    print msg.get_payload(decode=True)
+
+
+def utf8_reader(input_stream, dialect=None):
     """Wrapper for reading UTF8-encoded csv files"""
-    reader = csv.reader(input_stream)
+    reader = csv.reader(input_stream, dialect=dialect)
     for row in reader:
         yield [unicode(cell, 'utf-8') for cell in row]
 
@@ -76,15 +97,34 @@ def std_date(string):
     """Convert string to date"""
     return datetime.strptime(string, '%d.%m.%Y').date()
 
+def ask_value(question, default=None, choices=None):
+    """Ask user input"""
+    choice_str = ' (%s)' % '/'.join(choices) if choices else ''
+    default_str = ' [%s]' % default if default is not None else ''
+    while True:
+
+        val = raw_input(question + '%s:%s ' % (choice_str, default_str))
+        if val:
+            if not choices or val in choices:
+                return val
+        elif default is not None:
+            return default
+
 def parse_args(argv):
     """Parse command line arguments"""
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dry-run', action='store_true',
                         help='Do everything but send email')
+    parser.add_argument('--from', dest='sender', help="Sender's email")
     parser.add_argument('--cc',
                         help='Carbon copy to this email')
+    parser.add_argument('--smtp-server', help="Address of the SMTP server")
     parser.add_argument('-m', '--message',
-                        help='Greeting message')
+                        help='Greeting message, used for all invoices')
+    parser.add_argument('--subject',
+                        help="Messgae subject, used for all invoices")
+    parser.add_argument('-G', '--group-by', metavar='COLUMN', default='selite',
+                        help='Mass-send invoices with the same value of COLUMN')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-D', '--date', type=std_date,
                        help='Send invoices having this date')
@@ -102,11 +142,10 @@ def main(argv=None):
 
     args = parse_args(argv)
 
-    message = args.message or "Hei,\n\nOhessa lasku.\n"
-    message = message.decode('string_escape').decode('utf-8')
-
     with open(args.csv, 'r') as fobj:
-        reader = utf8_reader(fobj)
+        dialect = csv.Sniffer().sniff(fobj.read(512))
+        fobj.seek(0)
+        reader = utf8_reader(fobj, dialect)
         print "CSV file time stamp:", reader.next()[0]
         header_row = reader.next()
 
@@ -116,16 +155,92 @@ def main(argv=None):
 
     if args.range:
         send_data = [row for row in all_data if
-                        in_range(row[u'nro'], args.range)]
+                        row[u'nro'] and in_range(row[u'nro'], args.range)]
     else:
         date = args.date or datetime.now().date()
         send_data = [row for row in all_data if
                         row[u'nro'] and std_date(row[u'pvm']) == date]
 
-    for ind, row in enumerate(send_data, 1):
-        info = "INVOICE #%d to <%s>" % (ind, row['email'])
-        print "\n==== " + info + " " + "="*(76-5-len(info))
-        print compose_email(message, row)
+    if not send_data:
+        print "No invoices to send, exiting"
+        return 0
+
+    # Get SMTP server
+    smtp_server = args.smtp_server or ask_value('SMTP server')
+
+    # Get sender email
+    if args.sender:
+        sender = args.sender
+    else:
+        if 'EMAIL' in os.environ:
+            sender = os.environ['EMAIL']
+        sender = ask_value('From', default=sender)
+
+    server = smtplib.SMTP(smtp_server)
+
+    try:
+        # Group data
+        if args.group_by:
+            groups = set([row[args.group_by] for row in send_data])
+            grouped_data = []
+            for group in groups:
+                grouped_data.append([row for row in send_data if
+                            row[args.group_by] == group])
+            assert sum([len(grp) for grp in grouped_data]) == len(send_data)
+        else:
+            grouped_data = [[row] for row in send_data]
+
+        # Send grouped emails
+        for g_ind, group in enumerate(grouped_data, 1):
+            if len(group) > 1:
+                info_header = "#%d: INVOICE GROUP " % g_ind
+                info_msg = "%s: %s\n" % (args.group_by.upper(),
+                                         group[0][args.group_by])
+            else:
+                info_header = "#%d: SIGNLE INVOICE " % g_ind
+                info_msg = 'EMAIL: %(email)s\nSELITE: %(selite)s\n' \
+                           'SUMMA:%(summa)s\n' % group[0]
+            print "\n==== " + info_header + " " + "="*(76-5-len(info_header))
+            print info_msg
+
+            # Get greeting message
+            if args.message:
+                message = args.message
+            else:
+                message = "Hei,\n\nOhessa lasku."
+                message = ask_value('Greeting message', default=message)
+            message = message.decode('string_escape').decode('utf-8')
+
+            # Get subject
+            if args.subject:
+                subject = args.subject
+            else:
+                subject = ask_value('Subject')
+
+            # Ask for confirmation
+            example = compose_email(sender, group[0]['email'], subject, message,
+                                    group[0])
+            print '\n' + '-' * 79
+            pprint_email(example)
+            print '-' * 79 + '\n'
+            recipients = ['<%s>' % row['email'] for row in group]
+            proceed = ask_value("Send an email like above to %s" %
+                                ', '.join(recipients), choices=['n', 'y'])
+            if proceed == 'y':
+                for row in group:
+                    recipient = row['email']
+                    msg = compose_email(sender, recipient, subject, message,
+                                        row)
+                    print "Sending email to <%s>..." % recipient
+                    server.sendmail(sender, [recipient], msg.as_string())
+            else:
+                print "Did not send!"
+
+    finally:
+        server.quit()
+
+    return 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
