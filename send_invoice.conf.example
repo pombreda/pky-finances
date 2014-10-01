@@ -1,0 +1,8 @@
+[general]
+# Your (sender's) email
+#from = user@example.com
+
+# Put SMPT server address here
+#smtp-server = smtp.example.com
+
+

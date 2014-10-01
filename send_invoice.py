@@ -24,6 +24,7 @@ import csv
 import os
 import smtplib
 import sys
+from ConfigParser import ConfigParser
 from datetime import datetime
 from email.mime.text import MIMEText
 
@@ -111,6 +112,24 @@ def ask_value(question, default=None, choices=None):
         elif default is not None:
             return default
 
+def parse_config(path):
+    """Read config file"""
+    defaults = {'smtp-server': '',
+                'from': ''}
+    parser = ConfigParser(defaults)
+    parser.add_section('general')
+
+    filepath = os.path.join(path, 'send_invoice.conf')
+    confs = parser.read(filepath)
+    if confs:
+        print "Read config file %s" % confs
+    else:
+        print "Did not find config file %s" % filepath
+
+    # Only use one section, i.e. 'general'
+    return dict(parser.items('general'))
+
+
 def parse_args(argv):
     """Parse command line arguments"""
     parser = argparse.ArgumentParser()
@@ -136,7 +155,7 @@ def parse_args(argv):
 
     parser.add_argument('csv',
                         help='CSV file containing invoice entries')
-    return parser.parse_args(argv)
+    return parser.parse_args(argv[1:])
 
 def main(argv=None):
     """Script entry point"""
@@ -144,6 +163,7 @@ def main(argv=None):
     print "Welcome to PKY invoice sender!"
 
     args = parse_args(argv)
+    config = parse_config(os.path.dirname(argv[0]))
 
     with open(args.csv, 'r') as fobj:
         dialect = csv.Sniffer().sniff(fobj.read(512))
@@ -169,7 +189,10 @@ def main(argv=None):
         return 0
 
     # Get SMTP server
-    smtp_server = args.smtp_server or ask_value('SMTP server')
+    if args.smtp_server:
+        smtp_server = args.smtp_server
+    else:
+        smtp_server = config['smtp-server'] or ask_value('SMTP server')
 
     # Get sender email
     if args.sender:
@@ -177,7 +200,7 @@ def main(argv=None):
     else:
         if 'EMAIL' in os.environ:
             sender = os.environ['EMAIL']
-        sender = ask_value('From', default=sender)
+        sender = config['from'] or ask_value('From', default=sender)
 
     server = smtplib.SMTP(smtp_server)
 
@@ -257,4 +280,4 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(main(sys.argv))
