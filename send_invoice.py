@@ -241,10 +241,12 @@ def main(argv=None):
                     headers['to'] = recipients[0]
                     msg = compose_email(headers, message, row)
                     print "Sending email to <%s>..." % recipients[0]
-                    rsp = server.sendmail(sender, recipients, msg.as_string(),
-                                          rcpt_options=['NOTIFY=FAILURE,DELAY'])
-                    if rsp:
-                        print "Mail delivery failed: %s" % rsp
+                    if not args.dry_run:
+                        rsp = server.sendmail(sender,
+                                        recipients, msg.as_string(),
+                                        rcpt_options=['NOTIFY=FAILURE,DELAY'])
+                        if rsp:
+                            print "Mail delivery failed: %s" % rsp
             else:
                 print "Did not send!"
 
