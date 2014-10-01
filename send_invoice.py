@@ -45,20 +45,21 @@ Parhain terveisin,
   PKY
 """
 
-def compose_email(sender, recipient, subject, message, row_data):
+def compose_email(headers, greeting_msg, row_data):
     """Compose email text"""
-    msg = MIMEText(message + '\n' + DETAILS_TEMPLATE % row_data + FOOTER,
+    msg = MIMEText(greeting_msg + '\n' + DETAILS_TEMPLATE % row_data + FOOTER,
                    _charset='utf-8')
-    msg['Subject'] = subject
-    msg['From'] = sender
-    msg['To'] = recipient
+    for key, val in headers.iteritems():
+        msg[key.capitalize()] = val
     return msg
 
 def pprint_email(msg):
     """Pretty print email"""
-    print "From:", msg['From']
-    print "To:", msg['To']
-    print "Subject:", msg['Subject']
+    for key, val in msg.items():
+        # Filter out uninteresting parts
+        if key.lower() not in ['content-type', 'mime-version',
+                               'content-transfer-encoding']:
+            print '%s: %s' % (key, val)
     print ""
     print msg.get_payload(decode=True)
 
@@ -116,8 +117,10 @@ def parse_args(argv):
     parser.add_argument('-d', '--dry-run', action='store_true',
                         help='Do everything but send email')
     parser.add_argument('--from', dest='sender', help="Sender's email")
-    parser.add_argument('--cc',
+    parser.add_argument('--cc', action='append', default=[],
                         help='Carbon copy to this email')
+    parser.add_argument('--bcc', action='append', default=[],
+                        help='Blind (hidden) carbon copy to this email')
     parser.add_argument('--smtp-server', help="Address of the SMTP server")
     parser.add_argument('-m', '--message',
                         help='Greeting message, used for all invoices')
@@ -211,15 +214,21 @@ def main(argv=None):
                 message = ask_value('Greeting message', default=message)
             message = message.decode('string_escape').decode('utf-8')
 
-            # Get subject
+            # Email headers
+            headers = {'from': sender}
+
             if args.subject:
-                subject = args.subject
+                headers['subject'] = args.subject
             else:
-                subject = ask_value('Subject')
+                headers['subject'] = ask_value('Subject')
+            if args.cc:
+                headers['cc'] = ', '.join(args.cc)
+            if args.bcc:
+                headers['bcc'] = ', '.join(args.cc)
 
             # Ask for confirmation
-            example = compose_email(sender, group[0]['email'], subject, message,
-                                    group[0])
+            headers['to'] = group[0]['email']
+            example = compose_email(headers, message, group[0])
             print '\n' + '-' * 79
             pprint_email(example)
             print '-' * 79 + '\n'
@@ -228,11 +237,11 @@ def main(argv=None):
                                 ', '.join(recipients), choices=['n', 'y'])
             if proceed == 'y':
                 for row in group:
-                    recipient = row['email']
-                    msg = compose_email(sender, recipient, subject, message,
-                                        row)
-                    print "Sending email to <%s>..." % recipient
-                    rsp = server.sendmail(sender, [recipient], msg.as_string(),
+                    recipients = [row['email']] + args.cc + args.bcc
+                    headers['to'] = recipients[0]
+                    msg = compose_email(headers, message, row)
+                    print "Sending email to <%s>..." % recipients[0]
+                    rsp = server.sendmail(sender, recipients, msg.as_string(),
                                           rcpt_options=['NOTIFY=FAILURE,DELAY'])
                     if rsp:
                         print "Mail delivery failed: %s" % rsp
