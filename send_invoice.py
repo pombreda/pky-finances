@@ -150,7 +150,7 @@ def parse_args(argv):
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-D', '--date', type=std_date,
                        help='Send invoices having this date')
-    group.add_argument('-R', '--range',
+    group.add_argument('-I', '--index',
                        help='Send invoices having these index numbers')
 
     parser.add_argument('csv',
@@ -176,9 +176,9 @@ def main(argv=None):
         for row in reader:
             all_data.append(dict(zip([val.lower() for val in header_row], row)))
 
-    if args.range:
+    if args.index:
         send_data = [row for row in all_data if
-                        row[u'nro'] and in_range(row[u'nro'], args.range)]
+                        row[u'nro'] and in_range(row[u'nro'], args.index)]
     else:
         date = args.date or datetime.now().date()
         send_data = [row for row in all_data if
