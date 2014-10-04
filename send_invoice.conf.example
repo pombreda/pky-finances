@@ -5,4 +5,5 @@
 # Put SMPT server address here
 #smtp-server = smtp.example.com
 
-
+# Prefix all email subject
+#subject-prefix = [PREFIX]

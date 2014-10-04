@@ -115,7 +115,8 @@ def ask_value(question, default=None, choices=None):
 def parse_config(path):
     """Read config file"""
     defaults = {'smtp-server': '',
-                'from': ''}
+                'from': '',
+                'subject-prefix': ''}
     parser = ConfigParser(defaults)
     parser.add_section('general')
 
@@ -145,6 +146,8 @@ def parse_args(argv):
                         help='Greeting message, used for all invoices')
     parser.add_argument('--subject',
                         help="Messgae subject, used for all invoices")
+    parser.add_argument('--subject-prefix', metavar='PREFIX', default='',
+                        help='Prefix all email subjects with %(metavar)s')
     parser.add_argument('-G', '--group-by', metavar='COLUMN', default='viite',
                         help='Mass-send invoices with the same value of COLUMN')
     group = parser.add_mutually_exclusive_group()
@@ -204,6 +207,8 @@ def main(argv=None):
 
     server = smtplib.SMTP(smtp_server)
 
+    # Get subject prefix
+    subject_prefix = args.subject_prefix or config['subject-prefix']
     try:
         # Group data
         if args.group_by:
@@ -240,10 +245,11 @@ def main(argv=None):
             # Email headers
             headers = {'from': sender}
 
+            headers['subject'] = subject_prefix + ' ' if subject_prefix else ''
             if args.subject:
-                headers['subject'] = args.subject
+                headers['subject'] += args.subject
             else:
-                headers['subject'] = ask_value('Subject')
+                headers['subject'] += ask_value('Subject')
             if args.cc:
                 headers['cc'] = ', '.join(args.cc)
             if args.bcc:
