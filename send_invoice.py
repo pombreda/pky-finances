@@ -145,7 +145,7 @@ def parse_args(argv):
                         help='Greeting message, used for all invoices')
     parser.add_argument('--subject',
                         help="Messgae subject, used for all invoices")
-    parser.add_argument('-G', '--group-by', metavar='COLUMN', default='selite',
+    parser.add_argument('-G', '--group-by', metavar='COLUMN', default='viite',
                         help='Mass-send invoices with the same value of COLUMN')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-D', '--date', type=std_date,
@@ -224,7 +224,7 @@ def main(argv=None):
                                          group[0][args.group_by])
             else:
                 info_header = "#%d: SIGNLE INVOICE " % g_ind
-                info_msg = 'EMAIL: %(email)s\nSELITE: %(selite)s\n' \
+                info_msg = 'EMAIL: %(email)s\nVIITE: %(viite)s\n' \
                            'SUMMA:%(summa)s\n' % group[0]
             print "\n==== " + info_header + " " + "="*(76-5-len(info_header))
             print info_msg
