@@ -20,12 +20,14 @@
 """Helper for sending PKY invoices"""
 
 import argparse
+import email.charset
 import csv
 import os
 import smtplib
 import sys
 from ConfigParser import ConfigParser
 from datetime import datetime
+from email.header import Header, decode_header
 from email.mime.text import MIMEText
 
 
@@ -60,7 +62,7 @@ def pprint_email(msg):
         # Filter out uninteresting parts
         if key.lower() not in ['content-type', 'mime-version',
                                'content-transfer-encoding']:
-            print '%s: %s' % (key, val)
+            print '%s: %s' % (key, unicode(val))
     print ""
     print msg.get_payload(decode=True)
 
@@ -94,6 +96,15 @@ def in_range(val, range_str):
             if val >= int(split[0]) and val <= int(split[1]):
                 return True
     return False
+
+def utf8_header(text):
+    """Email header wih UTF-8 encoding"""
+    # Convert text to unicode (assume we're using UTF-8)
+    if isinstance(text, str):
+        utext = unicode(text, 'utf-8')
+    else:
+        utext = unicode(text)
+    return Header(utext, 'utf-8')
 
 def std_date(string):
     """Convert string to date"""
@@ -167,6 +178,9 @@ def main(argv=None):
 
     args = parse_args(argv)
     config = parse_config(os.path.dirname(argv[0]))
+
+    # Change email header encoding to QP for easier readability of raw data
+    email.charset.add_charset('utf-8', email.charset.QP, email.charset.QP)
 
     with open(args.csv, 'r') as fobj:
         dialect = csv.Sniffer().sniff(fobj.read(512))
@@ -243,20 +257,27 @@ def main(argv=None):
             message = message.decode('string_escape').decode('utf-8')
 
             # Email headers
-            headers = {'from': sender}
+            headers = {'from': utf8_header(sender)}
 
-            headers['subject'] = subject_prefix + ' ' if subject_prefix else ''
+            subject_prefix = subject_prefix + ' ' if subject_prefix else ''
             if args.subject:
-                headers['subject'] += args.subject
+                headers['subject'] = utf8_header(subject_prefix + args.subject)
             else:
-                headers['subject'] += ask_value('Subject')
+                headers['subject'] = utf8_header(subject_prefix +
+                                                 ask_value('Subject'))
             if args.cc:
-                headers['cc'] = ', '.join(args.cc)
+                headers['cc'] = utf8_header(args.cc[0])
+                for arg in args.cc[1:]:
+                    headers['cc'].append(u', ')
+                    headers['cc'].append(unicode(arg))
             if args.bcc:
-                headers['bcc'] = ', '.join(args.cc)
+                headers['bcc'] = utf8_header(args.bcc[0])
+                for arg in args.bcc[1:]:
+                    headers['bcc'].append(u', ')
+                    headers['bcc'].append(unicode(arg))
 
             # Ask for confirmation
-            headers['to'] = group[0]['email']
+            headers['to'] = utf8_header(group[0]['email'])
             example = compose_email(headers, message, group[0])
             print '\n' + '-' * 79
             pprint_email(example)
@@ -267,7 +288,7 @@ def main(argv=None):
             if proceed == 'y':
                 for row in group:
                     recipients = [row['email']] + args.cc + args.bcc
-                    headers['to'] = recipients[0]
+                    headers['to'] = utf8_header(recipients[0])
                     msg = compose_email(headers, message, row)
                     print "Sending email to <%s>..." % recipients[0]
                     if not args.dry_run:
