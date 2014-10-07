@@ -23,7 +23,9 @@ import argparse
 import email.charset
 import csv
 import os
+import re
 import smtplib
+import string
 import sys
 from ConfigParser import ConfigParser
 from datetime import datetime
@@ -97,14 +99,63 @@ def in_range(val, range_str):
                 return True
     return False
 
+def to_u(text):
+    """Convert text to unicode, assumes UTF-8 for str input"""
+    if isinstance(text, str):
+        return unicode(text, 'utf-8')
+    else:
+        return unicode(text)
+
 def utf8_header(text):
     """Email header wih UTF-8 encoding"""
     # Convert text to unicode (assume we're using UTF-8)
-    if isinstance(text, str):
-        utext = unicode(text, 'utf-8')
-    else:
-        utext = unicode(text)
-    return Header(utext, 'utf-8')
+    return Header(to_u(text), 'utf-8')
+
+def utf8_address_header(addr):
+    """Create an internationalized header from name, email tuple"""
+    if isinstance(addr, tuple) or isinstance(addr, basestring):
+        addr = [addr]
+
+    header = utf8_header('')
+    for address in addr:
+        if isinstance(address, basestring):
+            name, email = split_email_address(address)
+        else:
+            name, email = address
+        if str(header):
+            header.append(u', ')
+        if name:
+            header.append(to_u(name))
+            header.append(to_u(' <%s>' % email))
+        else:
+            header.append(to_u(email))
+    return header
+
+def split_email_address(text):
+    """Split name and address out of an email address
+
+    >>> split_email_address('foo@bar.com')
+    ('', 'foo@bar.com')
+    >>> split_email_address('Foo Bar foo@bar.com')
+    ('Foo Bar', 'foo@bar.com')
+    >>> split_email_address('  "Foo Bar" <foo@bar.com>, ')
+    ('Foo Bar', 'foo@bar.com')
+    """
+    split = text.strip().rsplit(None, 1)
+    email_re = r'.*?([^<%s]\S*@\S+[a-zA-Z])' % string.whitespace
+    match = re.match(email_re, split[-1])
+    if not match:
+        raise Exception("Invalid email address: '%s'" % text)
+    email = match.group(1)
+
+    name = ''
+    if len(split) > 1:
+        non_letter = string.punctuation + string.whitespace
+        name_re = r'.*?([^%s].*[^%s])' % (non_letter, non_letter)
+        match = re.match(name_re, split[0])
+        if match:
+            name = match.group(1)
+    return (name, email)
 
 def std_date(string):
     """Convert string to date"""
@@ -147,10 +198,13 @@ def parse_args(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dry-run', action='store_true',
                         help='Do everything but send email')
-    parser.add_argument('--from', dest='sender', help="Sender's email")
+    parser.add_argument('--from', dest='sender', type=split_email_address,
+                        help="Sender's email")
     parser.add_argument('--cc', action='append', default=[],
+                        type=split_email_address,
                         help='Carbon copy to this email')
     parser.add_argument('--bcc', action='append', default=[],
+                        type=split_email_address,
                         help='Blind (hidden) carbon copy to this email')
     parser.add_argument('--smtp-server', help="Address of the SMTP server")
     parser.add_argument('-m', '--message',
@@ -217,7 +271,8 @@ def main(argv=None):
     else:
         if 'EMAIL' in os.environ:
             sender = os.environ['EMAIL']
-        sender = config['from'] or ask_value('From', default=sender)
+        sender = split_email_address(config['from'] or
+                                     ask_value('From', default=sender))
 
     server = smtplib.SMTP(smtp_server)
 
@@ -257,7 +312,7 @@ def main(argv=None):
             message = message.decode('string_escape').decode('utf-8')
 
             # Email headers
-            headers = {'from': utf8_header(sender)}
+            headers = {'from': utf8_address_header(sender)}
 
             subject_prefix = subject_prefix + ' ' if subject_prefix else ''
             if args.subject:
@@ -266,29 +321,28 @@ def main(argv=None):
                 headers['subject'] = utf8_header(subject_prefix +
                                                  ask_value('Subject'))
             if args.cc:
-                headers['cc'] = utf8_header(args.cc[0])
-                for arg in args.cc[1:]:
-                    headers['cc'].append(u', ')
-                    headers['cc'].append(unicode(arg))
+                headers['cc'] = utf8_address_header(args.cc)
             if args.bcc:
-                headers['bcc'] = utf8_header(args.bcc[0])
-                for arg in args.bcc[1:]:
-                    headers['bcc'].append(u', ')
-                    headers['bcc'].append(unicode(arg))
+                headers['bcc'] = utf8_address_header(args.bcc)
 
             # Ask for confirmation
-            headers['to'] = utf8_header(group[0]['email'])
+            headers['to'] = utf8_address_header(group[0]['email'])
             example = compose_email(headers, message, group[0])
             print '\n' + '-' * 79
             pprint_email(example)
             print '-' * 79 + '\n'
-            recipients = ['<%s>' % row['email'] for row in group]
+            recipients = ['<%s>' % split_email_address(row['email'])[1] for
+                            row in group]
             proceed = ask_value("Send an email like above to %s" %
                                 ', '.join(recipients), choices=['n', 'y'])
             if proceed == 'y':
                 for row in group:
+                    to_name, to_email = split_email_address(row['email'])
+                    recipients = [to_email] + \
+                                 [cc[1] for cc in args.cc] + \
+                                 [bcc[1] for bcc in args.bcc]
                     recipients = [row['email']] + args.cc + args.bcc
-                    headers['to'] = utf8_header(recipients[0])
+                    headers['to'] = utf8_address_header((to_name, to_email))
                     msg = compose_email(headers, message, row)
                     print "Sending email to <%s>..." % recipients[0]
                     if not args.dry_run:
